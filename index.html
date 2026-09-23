@@ -321,6 +321,7 @@
       <button class="nav-btn primary" id="todayBtn">今天</button>
       <button class="nav-btn" id="refreshBtn">🔄 刷新</button>
       <button class="nav-btn green" id="exportDay">⬇ 导出当天</button>
+      <button class="nav-btn green" id="exportWeek">⬇ 导出本周</button>
       <button class="nav-btn green" id="exportAll">⬇ 导出全部</button>
       <span class="autotag" style="color:#94a3b8;font-size:11px;">数据云端存储，超14天自动清理</span>
       <button class="nav-btn bind-nav" id="bindMgrBtn">🔗 设备绑定</button>
@@ -656,6 +657,9 @@ function route(){
   if(h.indexOf('#export-day/')===0){
     document.body.classList.add('exp-mode');
     initExport('day', decodeURIComponent(h.slice('#export-day/'.length)));
+  }else if(h.indexOf('#export-week/')===0){
+    document.body.classList.add('exp-mode');
+    initExport('week', decodeURIComponent(h.slice('#export-week/'.length)));
   }else if(h==='#export-all'){
     document.body.classList.add('exp-mode');
     initExport('all', null);
@@ -1079,7 +1083,14 @@ function shiftCurDate(n){
 }
 async function openExport(kind){
   try{ await loadAdminRecords(); }catch(e){}
-  const hash = kind==='day' ? '#export-day/'+curDate : '#export-all';
+  let hash;
+  if(kind==='day') hash='#export-day/'+curDate;
+  else if(kind==='week'){
+    const info=termInfo(curDate);
+    const mon=addDays(curDate,-info.day);
+    hash='#export-week/'+mon;
+  }
+  else hash='#export-all';
   window.open(location.pathname+hash,'_blank');
 }
 let bindingsData=null;
@@ -1155,6 +1166,7 @@ function initAdmin(){
     $('dateInput').addEventListener('change',e=>{ if(e.target.value){ curDate=e.target.value; loadAdminRecords(); } });
     $('refreshBtn').addEventListener('click',()=>{ loadAdminRecords(); admToday=shanghaiNow().date; });
     $('exportDay').addEventListener('click',()=>openExport('day'));
+    $('exportWeek').addEventListener('click',()=>openExport('week'));
     $('exportAll').addEventListener('click',()=>openExport('all'));
     $('admTbody').addEventListener('click',async e=>{
       const btn=e.target.closest('.mini-btn');
@@ -1279,7 +1291,7 @@ async function initExport(kind, date){
         const s=blockSectionHTML(b); return s.head+s.table;
       }).join('');
       const file=buildExcelFile(expCurrent.titleHtml, sectionsHtml);
-      const fname=(expCurrent.kind==='day' ? '签到记录_'+expCurrent.date : '签到记录_全部')+'.xls';
+      const fname=(expCurrent.kind==='day' ? '签到记录_'+expCurrent.date : expCurrent.kind==='week' ? '签到记录_第'+expCurrent.week+'周' : '签到记录_全部')+'.xls';
       downloadBlob(file, fname, 'application/vnd.ms-excel;charset=utf-8');
     });
   }
@@ -1300,6 +1312,23 @@ async function initExport(kind, date){
         : '<div class="exp-legend">该日期无课程安排（周末 / 节假日 / 非教学周）。</div>';
       expCurrent={kind:'day',date,blocks:[block],
         titleHtml:'<h2>签到记录　'+date+' '+wd+'　第'+termInfo(date).week+'周</h2>'};
+    }else if(kind==='week'){
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('日期格式错误');
+      const info=termInfo(date);
+      const mon=addDays(date,-info.day);
+      const dayPromises=[];
+      for(let i=0;i<7;i++){
+        const d=addDays(mon,i);
+        dayPromises.push(getDayRecords(d).then(rec=>({date:d,rec})));
+      }
+      const results=await Promise.all(dayPromises);
+      const blocks=results.map(r=>buildDayBlock(r.date,r.rec)).filter(b=>b.periods.length);
+      $('expTitle').innerHTML='📊 签到记录 · 第'+info.week+'周<small>'+mon.slice(5)+' ~ '+addDays(mon,6).slice(5)+' · 共 '+blocks.length+' 天有课 · 签到窗口：上课前15分钟开放、开课后15分钟关闭</small>';
+      $('expBody').innerHTML=blocks.length
+        ? blocks.map(b=>{ const s=blockSectionHTML(b); return s.head+s.table; }).join('')
+        : '<div class="exp-legend">本周暂无课程安排。</div>';
+      expCurrent={kind:'week',week:info.week,blocks,
+        titleHtml:'<h2>签到记录　第'+info.week+'周　'+mon.slice(5)+' ~ '+addDays(mon,6).slice(5)+'</h2><div class="exp-stat">共 '+blocks.length+' 个有课日期</div>'};
     }else{
       const rows=await getAllRecords();
       const all={};
